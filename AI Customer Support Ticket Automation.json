@@ -1,0 +1,344 @@
+{
+  "name": "AI Customer Support Ticket Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "customer-support-ticket",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -336,
+        160
+      ],
+      "id": "cb8b97c4-6065-474c-8534-afc789739105",
+      "name": "Incoming Ticket Webhook",
+      "webhookId": "3f1978c8-4592-4a4f-aa0f-cea5619ee8fe"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "prompt": "=You are an expert Customer Support AI Assistant.\nAnalyze the following support ticket and classify it accurately.\n\nCustomer Name: {{ $json.body.customer_name }}\nSubject: {{ $json.body.subject }}\nIssue Description: {{ $json.body.message }}\n\nPerform the following tasks:\n1. Categorize into: \"Billing\", \"Technical\", \"Account\", or \"General\".\n2. Set Urgency: \"High\", \"Medium\", or \"Low\".\n3. Set requires_human: true (if refund, sensitive credential issue, or system bug), else false.\n4. Draft an empathetic, polite, and helpful auto-reply in Urdu/English blend.\n\nReturn strictly JSON format:\n{\n  \"category\": \"<Category>\",\n  \"urgency\": \"<High|Medium|Low>\",\n  \"requires_human\": <true|false>,\n  \"ai_response\": \"<Drafted reply text>\"\n}",
+        "options": {},
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        -96,
+        160
+      ],
+      "id": "3dc5da65-325a-42f4-892a-c2a30726f829",
+      "name": "Support AI Agent",
+      "credentials": {
+        "openAiApi": {
+          "id": "AsvuYb9isrZy6jRb",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input data aur Webhook data ko safely retrieve karna\nconst inputJson = $input.first()?.json || {};\nlet webhookData = {};\n\ntry {\n  webhookData = $(\"Incoming Ticket Webhook\").first()?.json?.body || $(\"Incoming Ticket Webhook\").first()?.json || {};\n} catch (e) {\n  webhookData = {};\n}\n\n// OpenAI ya AI Agent node se raw output nikalna\nlet aiRaw = inputJson.output || inputJson.text || inputJson.message?.content || inputJson.response || \"\";\n\nlet parsed = {};\n\nif (typeof aiRaw === 'object' && aiRaw !== null) {\n  parsed = aiRaw;\n} else if (typeof aiRaw === 'string') {\n  // Clean markdown ```json ``` tags if present\n  const cleanJson = aiRaw.replace(/```json/gi, '').replace(/```/g, '').trim();\n  try {\n    parsed = JSON.parse(cleanJson);\n  } catch (e) {\n    parsed = {\n      category: \"General\",\n      urgency: \"Medium\",\n      requires_human: true,\n      ai_response: aiRaw || \"Thank you for reaching out.\"\n    };\n  }\n}\n\nreturn {\n  json: {\n    ticket_id: webhookData.ticket_id || \"TCK-1001\",\n    customer_name: webhookData.customer_name || \"Wajiha Fareed\",\n    customer_email: webhookData.customer_email || \"wajihafareed00@gmail.com\",\n    subject: webhookData.subject || \"Payment Deducted But Account Inactive\",\n    original_message: webhookData.message || \"My payment of $50 was deducted yesterday, but my subscription is still inactive. Please check this issue and activate my account.\",\n    category: parsed.category || \"General\",\n    urgency: parsed.urgency || \"Medium\",\n    requires_human: Boolean(parsed.requires_human),\n    ai_response: parsed.ai_response || \"Assalam-o-Alaikum! We have received your query and will get back to you shortly.\",\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        160
+      ],
+      "id": "4479635c-fdb8-47f8-a3e1-e4eba70c198d",
+      "name": "Parse AI Output"
+    },
+    {
+      "parameters": {
+        "dataType": "boolean",
+        "value1": "={{ $json.requires_human }}",
+        "fallbackOutput": 1
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        384,
+        160
+      ],
+      "id": "89aacfc4-0341-40bb-a859-907151c6b672",
+      "name": "Route Ticket"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#support-escalations",
+          "mode": "name"
+        },
+        "text": "=🚨 *URGENT SUPPORT TICKET ESCALATED* 🚨\n*Ticket ID:* {{ $json.ticket_id }}\n*Customer:* {{ $json.customer_name }} ({{ $json.customer_email }})\n*Category:* {{ $json.category }} | *Urgency:* {{ $json.urgency }}\n\n*Issue:*\n>{{ $json.original_message }}\n\n*Suggested AI Draft Response:*\n>{{ $json.ai_response }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        624,
+        48
+      ],
+      "id": "422711e6-7c1e-43f2-9f53-998ab61e5c60",
+      "name": "Slack Escalation Alert",
+      "webhookId": "6c3244c7-4f5d-4d69-8aec-08d4573e9ecb",
+      "credentials": {
+        "slackApi": {
+          "id": "UHdDcl9QAnsDJ7Ee",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.customer_email }}",
+        "subject": "=Re: {{ $json.subject }} [Ticket #{{ $json.ticket_id }}]",
+        "message": "=<p>Hi {{ $json.customer_name }},</p>\n\n<p>{{ $json.ai_response }}</p>\n\n<hr/>\n<p><small>This is an automated support response. Ticket Reference: <strong>{{ $json.ticket_id }}</strong></small></p>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        624,
+        256
+      ],
+      "id": "1ec7d8e4-3bf2-4899-b872-2c608760020d",
+      "name": "Send Customer Auto Response",
+      "webhookId": "9f78c79a-a7f1-4a1c-be1f-d11a20eea070",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "VplQBltgx4itozjM",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1s1irLd-2kLq3pfXeVUSne88wtN58hbBMZdDCxjIwer8",
+          "mode": "list",
+          "cachedResultName": "Support Ticket Logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1s1irLd-2kLq3pfXeVUSne88wtN58hbBMZdDCxjIwer8/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1s1irLd-2kLq3pfXeVUSne88wtN58hbBMZdDCxjIwer8/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "1000",
+            "customer_name": "Wajiha fareed",
+            "customer_email": "wajihafareed@gmail.com",
+            "subject": "URGENT: Legal Notice & Refund Request",
+            "category": "Billing & Payments",
+            "ai_response": "Your ticket has been escalated to our human support team via Slack.",
+            "urgency": "High",
+            "requires_human": "True",
+            "timestamp": "2026-09-30T19:58:00Z"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_name",
+              "displayName": "customer_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_email",
+              "displayName": "customer_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "urgency",
+              "displayName": "urgency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "requires_human",
+              "displayName": "requires_human",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_response",
+              "displayName": "ai_response",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        864,
+        160
+      ],
+      "id": "52762d57-4f21-490f-9ee3-070bd3aa704e",
+      "name": "Log Ticket to Sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "94uDuYA4AtW7FNIG",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Incoming Ticket Webhook": {
+      "main": [
+        [
+          {
+            "node": "Support AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Support AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output": {
+      "main": [
+        [
+          {
+            "node": "Route Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Ticket": {
+      "main": [
+        [
+          {
+            "node": "Slack Escalation Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Customer Auto Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Escalation Alert": {
+      "main": [
+        [
+          {
+            "node": "Log Ticket to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Customer Auto Response": {
+      "main": [
+        [
+          {
+            "node": "Log Ticket to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "564a21b0-93f2-4986-b89d-0d96a6300cdb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bb25589a6c339d3c799cc180e0d183a92ee5c85da5a6777f2755598915f7bd04"
+  },
+  "nodeGroups": [],
+  "id": "f9qF5GOaBSgCZC6a",
+  "tags": []
+}
